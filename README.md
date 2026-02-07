@@ -1,1 +1,1 @@
-Storage for random stuff relating to [pxls.space](pxls.space).
+Storage for random stuff relating to pixel canvases.
