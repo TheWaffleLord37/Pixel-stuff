@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         bplace.art Pixel Time Viewer
 // @namespace    https://bplace.art/
-// @version      1.8
+// @version      2.2
 // @description  Shows the latest update time and relative age when clicking a pixel
 // @author       ChatGPT
 // @match        https://bplace.art/*
@@ -21,14 +21,18 @@
     let relativeTimer = null;
 
     /* ---------- FETCH INTERCEPT ---------- */
-
     window.fetch = async (...args) => {
         const response = await originalFetch(...args);
 
         try {
             const url = typeof args[0] === 'string' ? args[0] : args[0].url;
 
-            if (url.includes('/rest/v1/pixels')) {
+            const isGuildWar = location.pathname.startsWith('/guildwar');
+
+            if (
+                (!isGuildWar && url.includes('/rest/v1/pixels')) ||
+                (isGuildWar && url.includes('/rest/v1/guildwar_pixels'))
+            ) {
                 response.clone().json().then(data => {
                     if (!Array.isArray(data) || !data[0]?.updated_at) return;
 
@@ -42,24 +46,17 @@
     };
 
     /* ---------- GLOBAL OBSERVER ---------- */
-
     const globalObserver = new MutationObserver(() => {
         tryAttach();
     });
-
     globalObserver.observe(document.documentElement, {
         childList: true,
         subtree: true
     });
 
     /* ---------- CORE LOGIC ---------- */
-
-    function isGuildWar() {
-        return location.pathname.startsWith('/guildwar');
-    }
-
     function tryAttach() {
-        if (!isGuildWar() && !lastUpdatedAt) return;
+        if (!lastUpdatedAt) return;
 
         const container = document.querySelector(
             'div.flex.justify-center.gap-\\[6px\\][style*="margin-top"]'
@@ -79,17 +76,14 @@
     }
 
     function keepBoxLast() {
-        if (!currentContainer) return;
+        if (!currentContainer || !lastUpdatedAt) return;
 
         let box = currentContainer.querySelector('[data-updated-at-box]');
 
         if (!box) {
             box = createBox();
             currentContainer.appendChild(box);
-
-            if (!isGuildWar() && lastUpdatedAt) {
-                startRelativeTimer(box);
-            }
+            startRelativeTimer(box);
         }
 
         if (currentContainer.lastElementChild !== box) {
@@ -98,7 +92,6 @@
     }
 
     /* ---------- BOX CREATION ---------- */
-
     function createBox() {
         const box = document.createElement('div');
         box.setAttribute('data-updated-at-box', 'true');
@@ -122,21 +115,15 @@
         relativeLine.style.opacity = '0.75';
         relativeLine.setAttribute('data-relative-time', 'true');
 
-        if (isGuildWar()) {
-            timeLine.innerHTML = `<span style="font-size: 16px;">⏰</span> Unknown`;
-            relativeLine.textContent =
-                "(Accurate times for Guild War don't work 🙁)";
-        } else {
-            timeLine.innerHTML = `<span style="font-size: 16px;">⏰</span> ${
-                lastUpdatedAt.toLocaleTimeString([], {
-                    hour: '2-digit',
-                    minute: '2-digit',
-                    second: '2-digit'
-                })
-            }`;
+        timeLine.innerHTML = `<span style="font-size: 16px;">⏰</span> ${
+            lastUpdatedAt.toLocaleTimeString([], {
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit'
+            })
+        }`;
 
-            updateRelativeTime(relativeLine, lastUpdatedAt);
-        }
+        updateRelativeTime(relativeLine, lastUpdatedAt);
 
         box.appendChild(timeLine);
         box.appendChild(relativeLine);
@@ -145,7 +132,6 @@
     }
 
     /* ---------- RELATIVE TIME ---------- */
-
     function startRelativeTimer(box) {
         if (relativeTimer) clearInterval(relativeTimer);
 
@@ -162,39 +148,47 @@
     }
 
     function updateRelativeTime(el, date) {
-        const diffMs = Date.now() - date.getTime();
-        const diffSec = Math.floor(diffMs / 1000);
+        let diffSec = Math.floor((Date.now() - date.getTime()) / 1000);
+        if (diffSec < 0) diffSec = 0;
 
-        if (diffSec < 60) {
-            el.textContent = `Placed ${diffSec} second${diffSec !== 1 ? 's' : ''} ago`;
-            return;
+        const years = Math.floor(diffSec / (365 * 24 * 60 * 60));
+        diffSec -= years * 365 * 24 * 60 * 60;
+
+        const months = Math.floor(diffSec / (30 * 24 * 60 * 60));
+        diffSec -= months * 30 * 24 * 60 * 60;
+
+        const days = Math.floor(diffSec / (24 * 60 * 60));
+        diffSec -= days * 24 * 60 * 60;
+
+        const hours = Math.floor(diffSec / (60 * 60));
+        diffSec -= hours * 60 * 60;
+
+        const minutes = Math.floor(diffSec / 60);
+        diffSec -= minutes * 60;
+
+        const seconds = diffSec;
+
+        // pick largest two meaningful units
+        const units = [
+            { value: years, name: 'year' },
+            { value: months, name: 'month' },
+            { value: days, name: 'day' },
+            { value: hours, name: 'hr' },
+            { value: minutes, name: 'min' },
+            { value: seconds, name: 'sec' }
+        ];
+
+        const display = [];
+        for (let i = 0; i < units.length; i++) {
+            if (units[i].value > 0) {
+                display.push(`${units[i].value} ${units[i].name}${units[i].value !== 1 ? 's' : ''}`);
+            }
+            if (display.length >= 2) break;
         }
 
-        const diffMin = Math.floor(diffSec / 60);
-        if (diffMin < 60) {
-            el.textContent = `Placed ${diffMin} minute${diffMin !== 1 ? 's' : ''} ago`;
-            return;
-        }
+        // if all units are 0 (just placed), show seconds
+        if (display.length === 0) display.push('0 sec');
 
-        const diffHr = Math.floor(diffMin / 60);
-        if (diffHr < 24) {
-            el.textContent = `Placed ${diffHr} hour${diffHr !== 1 ? 's' : ''} ago`;
-            return;
-        }
-
-        const diffDay = Math.floor(diffHr / 24);
-        if (diffDay < 30) {
-            el.textContent = `Placed ${diffDay} day${diffDay !== 1 ? 's' : ''} ago`;
-            return;
-        }
-
-        const diffMonth = Math.floor(diffDay / 30);
-        if (diffMonth < 12) {
-            el.textContent = `Placed ${diffMonth} month${diffMonth !== 1 ? 's' : ''} ago`;
-            return;
-        }
-
-        const diffYear = Math.floor(diffMonth / 12);
-        el.textContent = `Placed ${diffYear} year${diffYear !== 1 ? 's' : ''} ago`;
+        el.textContent = `Placed ${display.join(' ')} ago`;
     }
 })();
